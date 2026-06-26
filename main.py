@@ -3,6 +3,7 @@ import sqlite3
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
+from aiohttp import web
 
 # ----------------- НАСТРОЙКИ (ВСТАВЬ СВОИ ДАННЫЕ) -----------------
 BOT_TOKEN = "8641012155:AAFNRSYel-4zOvIYXwRJCNyAsmCCysr5qfc"
@@ -43,13 +44,8 @@ def get_main_keyboard(user_id):
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    welcome_text = (
-        "🏫 **Добро пожаловать в Электронный Дневник Школы!**\n\n"
-        "Используй кнопки ниже для управления и просмотра оценок."
-    )
-    if message.from_user.id == OWNER_ID:
-        welcome_text += "\n\n👑 **Вы зашли как Главный Админ бота!**"
-        
+    welcome_text = "🏫 **Добро пожаловать в Электронный Дневник Школы!**\n\nИспользуй кнопки ниже для управления."
+    if message.from_user.id == OWNER_ID: welcome_text += "\n\n👑 **Вы зашли как Главный Админ бота!**"
     await message.answer(welcome_text, reply_markup=get_main_keyboard(message.from_user.id))
 
 @dp.callback_query(F.data == "view_my_grades")
@@ -65,7 +61,6 @@ async def process_parent_menu(callback: CallbackQuery):
     cursor.execute("SELECT child_nickname FROM parents WHERE parent_id = ?", (parent_id,))
     result = cursor.fetchone()
     conn.close()
-
     if result:
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 Проверить оценки ребёнка", callback_query_data="check_child")],
@@ -83,7 +78,7 @@ async def process_parent_menu(callback: CallbackQuery):
 
 @dp.callback_query(F.data == "link_child")
 async def process_link_child(callback: CallbackQuery):
-    await callback.message.answer("⌨️ Напиши в чат команду: `/parent Ник_Ребёнка` (например: `/parent Ivan_Ivanov`) ")
+    await callback.message.answer("⌨️ Напиши в чат команду: `/parent Ник_Ребёнка`")
     await callback.answer()
 
 @dp.callback_query(F.data == "check_child")
@@ -106,7 +101,7 @@ async def process_teacher_menu(callback: CallbackQuery):
     if not is_teacher(callback.from_user.id):
         await callback.answer("❌ У тебя нет прав учителя!", show_alert=True)
         return
-    await callback.message.answer("✍️ Чтобы поставить оценку, напиши в чат команду:\n`/set Ник Оценка` (например: `/set Ivan_Ivanov 5`) ")
+    await callback.message.answer("✍️ Чтобы поставить оценку, напиши в чат команду:\n`/set Ник Оценка`")
     await callback.answer()
 
 @dp.callback_query(F.data == "admin_menu")
@@ -114,15 +109,12 @@ async def process_admin_menu(callback: CallbackQuery):
     if callback.from_user.id != OWNER_ID:
         await callback.answer("❌ Доступно только Админу бота!", show_alert=True)
         return
-    await callback.message.answer("👑 **Панель Админа**\nЧтобы выдать права новому учителю, напиши:\n`/add_teacher ID_Телеграма` ")
+    await callback.message.answer("👑 **Панель Админа**\nЧтобы выдать права новому учителю, напиши:\n`/add_teacher ID_Телеграма`")
     await callback.answer()
 
 @dp.callback_query(F.data == "back_main")
 async def process_back_main(callback: CallbackQuery):
-    await callback.message.edit_text(
-        "🏫 **Добро пожаловать в Электронный Дневник Школы!**\n\nИспользуй кнопки ниже для управления и просмотра оценок.",
-        reply_markup=get_main_keyboard(callback.from_user.id)
-    )
+    await callback.message.edit_text("🏫 **Добро пожаловать в Электронный Дневник Школы!**\n\nИспользуй кнопки ниже для управления.", reply_markup=get_main_keyboard(callback.from_user.id))
     await callback.answer()
 
 @dp.message(Command("add_teacher"))
@@ -140,7 +132,7 @@ async def cmd_add_teacher(message: Message):
         conn.commit()
         await message.answer(f"✅ ID `{teacher_id}` успешно добавлен в список Учителей!")
     except sqlite3.IntegrityError:
-        await message.answer("⚠️ Этот ID уже в списке учителей.")
+        await message.answer("⚠️ Этот ID уже в списке.")
     finally: conn.close()
 
 @dp.message(Command("set"))
@@ -177,7 +169,7 @@ async def cmd_parent(message: Message):
     cursor.execute("INSERT OR REPLACE INTO parents (parent_id, child_nickname) VALUES (?, ?)", (message.from_user.id, child_nickname))
     conn.commit()
     conn.close()
-    await message.answer(f"✅ Ученик **{child_nickname}** привязан к родительскому кабинету!")
+    await message.answer(f"✅ Ученик **{child_nickname}** привязан!")
 
 @dp.message(F.text)
 async def view_grades(message: Message):
@@ -193,8 +185,21 @@ async def view_grades(message: Message):
     else:
         await message.answer(f"🔍 Ник **{nickname}** не найден или оценок нет.")
 
+# --- ОБМАНКА ДЛЯ ТАЙМ-АУТА РЕНДЕРА ---
+async def handle_web(request):
+    return web.Response(text="Бот запущен!")
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get("/", handle_web)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", 10000)
+    await site.start()
+
 async def main():
     init_db()
+    await start_web() # Врубаем микро-сайт
     print("🚀 Кнопочный бот запущен!")
     await dp.start_polling(bot)
 
